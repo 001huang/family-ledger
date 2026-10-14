@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F1E4CE">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>家庭手账本</title>
 <style>
 :root{
@@ -973,7 +976,9 @@ var DEF = {
   },
   showDone: false,
   lastSync: '',
-  expWarnDefault: 3
+  expWarnDefault: 3,
+  reminders: [],
+  push: { on: false, topic: '', armed: {}, localArmed: {} }
 };
 var D = load();
 var curPage = 'today',
@@ -1002,6 +1007,12 @@ function migrate(d) {
     if (typeof d.showDone !== 'boolean') d.showDone = false;
     if (!d.homeName) d.homeName = '我们家';
     if (typeof d.expWarnDefault !== 'number') d.expWarnDefault = 3;
+    if (!Array.isArray(d.reminders)) d.reminders = [];
+    if (!d.push || typeof d.push !== 'object') d.push = { on: false, topic: '', armed: {}, localArmed: {} };
+    if (!d.push.armed || typeof d.push.armed !== 'object') d.push.armed = {};
+    if (!d.push.localArmed || typeof d.push.localArmed !== 'object') d.push.localArmed = {};
+    if (typeof d.push.on !== 'boolean') d.push.on = false;
+    if (typeof d.push.topic !== 'string') d.push.topic = '';
     var withId = ['members', 'fridge', 'shopping', 'todos', 'journal', 'books', 'ledger'];
     var seen = {};
     withId.forEach(function (k) {
@@ -2837,9 +2848,11 @@ function openTodo(id) {
     return '<option ' + ((t && t.pri || '中') === p ? 'selected' : '') + '>' + p + '</option>';
   }).join('') + '</select></div>' + '<div class="field"><label>重复</label><select id="t_rep">' + ['不重复', '每天', '每周', '每月'].map(function (r) {
     return '<option ' + ((t && t.repeat || '不重复') === r ? 'selected' : '') + '>' + r + '</option>';
-  }).join('') + '</select></div></div>' + '<div class="hint">🔁 设了重复的任务，勾选完成后会自动生成下一周期的新任务。</div>' + '<label class="checkline"><input type="checkbox" id="t_urg" ' + (t && t.urgent ? 'checked' : '') + '> 🔥 标记为「急」</label>' + visField(t), function () {
+  }).join('') + '</select></div></div>' + '<div class="hint">🔁 设了重复的任务，勾选完成后会自动生成下一周期的新任务。</div>' + '<label class="checkline"><input type="checkbox" id="t_urg" ' + (t && t.urgent ? 'checked' : '') + '> 🔥 标记为「急」</label>' + remindFieldsHtml(t && t.remindAtMs ? { atMs: t.remindAtMs } : null) + visField(t), function () {
     var title = document.getElementById('t_title').value.trim();
     if (!title) return toast('写下任务内容吧');
+    var rem = readRemindFromForm(title, document.getElementById('t_desc').value.trim(), 'todo', t ? t.id : '');
+    if (rem === false) return;
     var o = stamp({
       title: title,
       desc: document.getElementById('t_desc').value.trim(),
@@ -2849,7 +2862,8 @@ function openTodo(id) {
       repeat: document.getElementById('t_rep').value,
       urgent: document.getElementById('t_urg').checked,
       scope: document.getElementById('x_vis').value === 'private' ? 'private' : 'shared',
-      owner: document.getElementById('x_vis').value === 'private' ? D.me : ''
+      owner: document.getElementById('x_vis').value === 'private' ? D.me : '',
+      remindAtMs: rem ? rem.atMs : 0
     });
     if (t) Object.assign(t, o);else D.todos.unshift(Object.assign({
       id: uid(),
@@ -2859,10 +2873,14 @@ function openTodo(id) {
       talks: [],
       seen: {}
     }, o));
+    var tid = t ? t.id : D.todos[0].id;
+    if (rem) rem.sourceId = tid;
+    upsertReminderForSource('todo', tid, rem || null);
     save();
     closeModal();
     renderAll();
     toast(t ? '已更新 ✅' : '任务已创建 ✅');
+    if (rem && D.push && D.push.on) toast('提醒已安排 🔔');
     if (!t) setTimeout(function () {
       var nt = D.todos[0];
       if (nt) openTalk(nt.id);
@@ -3589,10 +3607,13 @@ function openJournal(id) {
     return '<option value="' + m.id + '" ' + (j && j.by === m.id ? 'selected' : '') + '>' + m.emoji + ' ' + esc(m.name) + '</option>';
   }).join('') + '</select></div></div>' + '<div class="field"><label>胶带</label><div class="emoji-pick" id="j_tape">' + tapes.map(function (t) {
     return '<span class="' + (j && (j.tape || '') === t ? 'on' : '') + '" data-v="' + t + '" onclick="pickOne(\'j_tape\',this)" style="background:' + (t ? TC[t] : '#fff') + '">' + (t ? '' : '无') + '</span>';
-  }).join('') + '</div></div>' + '<div class="field"><label>标签（空格分开）</label><input id="j_tags" value="' + esc(j && j.tags ? j.tags.join(' ') : '') + '" placeholder="例如：聚餐 采购"></div>' + '<div class="field"><label>📎 照片 / 视频</label><div class="row">' + '<button class="btn sm" onclick="pickMedia(\'image\')">🖼️ 照片</button><button class="btn sm" onclick="pickMedia(\'video\')">🎬 视频</button>' + '<span style="font-size:12px;color:var(--ink2)" id="mediaTip">' + (mediaBuf.length ? mediaBuf.length + ' 个已附加' : '还没添加') + '</span></div>' + '<div class="media-grid" id="mediaPrev"></div></div>' + '<div class="field"><label>谁能看到</label><select id="x_vis">' + '<option value="private" ' + (!j || isPrivate(j) ? 'selected' : '') + '>🔒 只有我看（同步不会发出去）</option>' + '<option value="shared" ' + (j && !isPrivate(j) ? 'selected' : '') + '>👁 全家可见（同步给家人）</option></select></div>', function () {
+  }).join('') + '</div></div>' + '<div class="field"><label>标签（空格分开）</label><input id="j_tags" value="' + esc(j && j.tags ? j.tags.join(' ') : '') + '" placeholder="例如：聚餐 采购"></div>' + '<div class="field"><label>📎 照片 / 视频</label><div class="row">' + '<button class="btn sm" onclick="pickMedia(\'image\')">🖼️ 照片</button><button class="btn sm" onclick="pickMedia(\'video\')">🎬 视频</button>' + '<span style="font-size:12px;color:var(--ink2)" id="mediaTip">' + (mediaBuf.length ? mediaBuf.length + ' 个已附加' : '还没添加') + '</span></div>' + '<div class="media-grid" id="mediaPrev"></div></div>' + remindFieldsHtml(j && j.remindAtMs ? { atMs: j.remindAtMs } : null) + '<div class="field"><label>谁能看到</label><select id="x_vis">' + '<option value="private" ' + (!j || isPrivate(j) ? 'selected' : '') + '>🔒 只有我看（同步不会发出去）</option>' + '<option value="shared" ' + (j && !isPrivate(j) ? 'selected' : '') + '>👁 全家可见（同步给家人）</option></select></div>', function () {
     var date = document.getElementById('j_date').value || today();
     var tags = document.getElementById('j_tags').value.trim().split(/\s+/).filter(Boolean);
     var priv = document.getElementById('x_vis').value === 'private';
+    var titleJ = document.getElementById('j_title').value.trim() || ('手账 ' + date);
+    var rem = readRemindFromForm(titleJ, document.getElementById('j_text').value.trim().slice(0, 80), 'journal', j ? j.id : '');
+    if (rem === false) return;
     var o = stamp({
       date: date,
       title: document.getElementById('j_title').value.trim(),
@@ -3604,7 +3625,8 @@ function openJournal(id) {
       tags: tags,
       media: mediaBuf,
       scope: priv ? 'private' : 'shared',
-      owner: priv ? D.me : ''
+      owner: priv ? D.me : '',
+      remindAtMs: rem ? rem.atMs : 0
     });
     if (j) Object.assign(j, o);else D.journal.unshift(Object.assign({
       id: uid()
@@ -3612,10 +3634,14 @@ function openJournal(id) {
     D.journal.sort(function (a, b) {
       return b.date.localeCompare(a.date);
     });
+    var jid = j ? j.id : D.journal[0].id;
+    if (rem) rem.sourceId = jid;
+    upsertReminderForSource('journal', jid, rem || null);
     save();
     closeModal();
     renderAll();
     toast('手账已保存 📖');
+    if (rem && D.push && D.push.on) toast('提醒已安排 🔔');
     go('journal');
   });
   renderMediaPrev();
@@ -3979,7 +4005,9 @@ function buildSyncPack() {
     ledger: sharedOnly(D.ledger),
     sales: sharedOnly(D.sales),
     talks: sharedTalks(),
-    tombstones: D.tombstones
+    tombstones: D.tombstones,
+    reminders: (D.reminders || []).filter(function (r) { return r && !r.done; }).slice(0, 100),
+    push: D.push ? { on: !!D.push.on, topic: D.push.topic || '' } : { on: false, topic: '' }
   };
 }
 function openSync() {
@@ -4185,6 +4213,21 @@ function applyPack(p) {
   });
   if (D.tombstones.length > 600) D.tombstones = D.tombstones.slice(-600);
   if (p.homeName && !D.homeName) D.homeName = p.homeName;
+  if (p.push && p.push.topic) {
+    ensurePush();
+    if (!D.push.topic) D.push.topic = p.push.topic;
+    if (p.push.on) D.push.on = true;
+  }
+  if (Array.isArray(p.reminders)) {
+    ensurePush();
+    var rmap = {};
+    D.reminders.forEach(function (r) { if (r && r.id) rmap[r.id] = r; });
+    p.reminders.forEach(function (r) {
+      if (!r || !r.id) return;
+      if (!rmap[r.id]) { D.reminders.push(r); rmap[r.id] = r; }
+      else if ((r.createdAt || 0) > (rmap[r.id].createdAt || 0)) Object.assign(rmap[r.id], r);
+    });
+  }
   D.journal.sort(function (a, b) {
     return b.date.localeCompare(a.date);
   });
@@ -4194,12 +4237,339 @@ function applyPack(p) {
   renderAll();
   toast('合并完成：新增 ' + added + ' 条，更新 ' + updated + ' 条' + (removed ? '，删除 ' + removed + ' 条' : '') + (talked ? '，新回复 ' + talked + ' 条' : ''));
 }
+
+/* ===== 提醒 / 真推送（ntfy） / 本地通知 / 日历 ===== */
+var NTFY_MAX_MS = 3 * 24 * 60 * 60 * 1000;
+var _remindTimers = {};
+function ensurePush() {
+  if (!D.push || typeof D.push !== 'object') D.push = { on: false, topic: '', armed: {}, localArmed: {} };
+  if (!D.push.armed) D.push.armed = {};
+  if (!D.push.localArmed) D.push.localArmed = {};
+  if (!Array.isArray(D.reminders)) D.reminders = [];
+}
+function genTopic() {
+  var s = '';
+  try {
+    var a = new Uint8Array(8);
+    crypto.getRandomValues(a);
+    for (var i = 0; i < a.length; i++) s += ('0' + a[i].toString(16)).slice(-2);
+  } catch (e) {
+    s = Math.random().toString(16).slice(2) + Date.now().toString(16);
+  }
+  return 'fl' + s;
+}
+function appBaseUrl() {
+  try {
+    if (location.protocol === 'file:') return 'https://001huang.github.io/family-ledger/';
+    return location.href.split('#')[0].replace(/index\.html$/i, '');
+  } catch (e) {
+    return 'https://001huang.github.io/family-ledger/';
+  }
+}
+function toLocalInputValue(ms) {
+  var d = new Date(ms);
+  if (isNaN(d.getTime())) d = new Date(Date.now() + 3600000);
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + 'T' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+function parseLocalInput(v) {
+  if (!v) return 0;
+  var t = new Date(v).getTime();
+  return isNaN(t) ? 0 : t;
+}
+function remindFieldsHtml(existing) {
+  ensurePush();
+  var on = !!(existing && existing.atMs);
+  var at = on ? toLocalInputValue(existing.atMs) : toLocalInputValue(Date.now() + 3600000);
+  return '<label class="checkline"><input type="checkbox" id="r_on" ' + (on ? 'checked' : '') + ' onchange="var b=document.getElementById(\'r_box\');if(b)b.style.display=this.checked?\'\':\'none\'"> 🔔 设置提醒</label>' +
+    '<div id="r_box" style="display:' + (on ? 'block' : 'none') + ';margin-top:8px">' +
+    '<div class="field"><label>提醒时间</label><input id="r_at" type="datetime-local" value="' + at + '"></div>' +
+    '<div class="hint">关网页也要响：请先在「⚙️ 设置 → 🔔 手机提醒」里开启真推送，并在手机装 <b>ntfy</b> 订阅家庭话题。也可点下面加到系统日历（最稳）。</div>' +
+    '<button type="button" class="btn sm block" onclick="previewAddCalendar()">📅 加到手机日历（推荐兜底）</button>' +
+    '</div>';
+}
+function readRemindFromForm(title, body, source, sourceId) {
+  ensurePush();
+  var on = document.getElementById('r_on');
+  if (!on || !on.checked) return null;
+  var atMs = parseLocalInput(document.getElementById('r_at').value);
+  if (!atMs) {
+    toast('请选择提醒时间');
+    return false;
+  }
+  if (atMs < Date.now() - 30000) {
+    toast('提醒时间不能早于现在');
+    return false;
+  }
+  return {
+    id: uid(),
+    title: title || '家庭手账提醒',
+    body: body || '',
+    atMs: atMs,
+    at: toLocalInputValue(atMs),
+    source: source || 'manual',
+    sourceId: sourceId || '',
+    done: false,
+    createdAt: nowStamp()
+  };
+}
+function upsertReminderForSource(source, sourceId, rem) {
+  ensurePush();
+  D.reminders = D.reminders.filter(function (r) {
+    return !(r.source === source && r.sourceId === sourceId && !r.done);
+  });
+  if (rem) {
+    rem.source = source;
+    rem.sourceId = sourceId;
+    D.reminders.unshift(rem);
+    queueReminder(rem);
+  }
+}
+function queueReminder(r) {
+  if (!r || r.done) return;
+  armLocalReminder(r);
+  armNtfyReminder(r);
+}
+function armLocalReminder(r) {
+  ensurePush();
+  var delay = r.atMs - Date.now();
+  if (delay < 0) return;
+  if (_remindTimers[r.id]) clearTimeout(_remindTimers[r.id]);
+  if (delay > 2147483647) return;
+  _remindTimers[r.id] = setTimeout(function () {
+    fireLocalReminder(r);
+  }, delay);
+  D.push.localArmed[r.id] = r.atMs;
+}
+function fireLocalReminder(r) {
+  ensurePush();
+  if (!r || r.done) return;
+  var title = r.title || '家庭手账提醒';
+  var body = r.body || '';
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      navigator.serviceWorker.ready.then(function (reg) {
+        if (reg.showNotification) {
+          reg.showNotification(title, {
+            body: body,
+            icon: 'icons/icon-192.png',
+            badge: 'icons/icon-192.png',
+            tag: 'rem-' + r.id,
+            data: { url: appBaseUrl(), id: r.id }
+          });
+        }
+      }).catch(function () {
+        if (window.Notification && Notification.permission === 'granted') {
+          new Notification(title, { body: body, icon: 'icons/icon-192.png' });
+        }
+      });
+    } else if (window.Notification && Notification.permission === 'granted') {
+      new Notification(title, { body: body, icon: 'icons/icon-192.png' });
+    }
+  } catch (e) {}
+  try { toast('🔔 ' + title); } catch (e2) {}
+}
+function armNtfyReminder(r) {
+  ensurePush();
+  if (!D.push.on || !D.push.topic) return;
+  var delay = r.atMs - Date.now();
+  if (delay < 8000) delay = 8000;
+  if (delay > NTFY_MAX_MS) {
+    /* 超过 3 天：等临近再投递 */
+    return;
+  }
+  if (D.push.armed[r.id] === r.atMs) return;
+  var delaySec = Math.ceil(delay / 1000);
+  var topic = D.push.topic;
+  var headers = {
+    'Title': (r.title || '家庭手账提醒').slice(0, 80),
+    'Tags': 'notebook,bell',
+    'Delay': delaySec + 's',
+    'Click': appBaseUrl()
+  };
+  fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
+    method: 'POST',
+    headers: headers,
+    body: (r.body || r.title || '你有一条提醒').slice(0, 500)
+  }).then(function (res) {
+    if (res.ok) {
+      D.push.armed[r.id] = r.atMs;
+      save();
+    } else {
+      toast('真推送投递失败（可改用日历）');
+    }
+  }).catch(function () {
+    toast('真推送网络失败（可改用日历）');
+  });
+}
+function armAllReminders() {
+  ensurePush();
+  var now = Date.now();
+  D.reminders.forEach(function (r) {
+    if (!r || r.done) return;
+    if (r.atMs < now - 60000) return;
+    queueReminder(r);
+  });
+}
+function previewAddCalendar() {
+  var titleEl = document.getElementById('t_title') || document.getElementById('j_title');
+  var title = (titleEl && titleEl.value.trim()) || '家庭手账提醒';
+  var bodyEl = document.getElementById('t_desc') || document.getElementById('j_text');
+  var body = bodyEl ? bodyEl.value.trim() : '';
+  var atMs = parseLocalInput((document.getElementById('r_at') || {}).value);
+  if (!atMs) return toast('先选提醒时间');
+  downloadIcs({ title: title, body: body, atMs: atMs, id: 'draft' });
+}
+function icsEscape(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+function toIcsUtc(ms) {
+  var d = new Date(ms);
+  return d.getUTCFullYear() + p2(d.getUTCMonth() + 1) + p2(d.getUTCDate()) + 'T' + p2(d.getUTCHours()) + p2(d.getUTCMinutes()) + p2(d.getUTCSeconds()) + 'Z';
+}
+function downloadIcs(r) {
+  var icsUid = (r.id || ('r'+Date.now().toString(36))) + '@family-ledger';
+  var dt = toIcsUtc(r.atMs);
+  var dtEnd = toIcsUtc(r.atMs + 15 * 60 * 1000);
+  var ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//family-ledger//reminders//ZH',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    'UID:' + icsUid,
+    'DTSTAMP:' + toIcsUtc(Date.now()),
+    'DTSTART:' + dt,
+    'DTEND:' + dtEnd,
+    'SUMMARY:' + icsEscape(r.title || '家庭手账提醒'),
+    'DESCRIPTION:' + icsEscape(r.body || ''),
+    'BEGIN:VALARM',
+    'TRIGGER:-PT0M',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:' + icsEscape(r.title || '提醒'),
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+  var blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '提醒_' + (r.title || 'ledger').slice(0, 12) + '.ics';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('已生成日历文件，用系统日历打开即可到点提醒 📅');
+}
+function registerPwa() {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    if (location.protocol === 'file:') return;
+    navigator.serviceWorker.register('./sw.js').catch(function () {});
+  } catch (e) {}
+}
+function openPushSetup() {
+  ensurePush();
+  if (!D.push.topic) D.push.topic = genTopic();
+  var topic = D.push.topic;
+  var subWeb = 'https://ntfy.sh/' + encodeURIComponent(topic);
+  var html = '<div class="hint ok">✅ 真推送方案：免费公共推送 <b>ntfy.sh</b>（无需再注册 OneSignal 等账号）。关网页也能收到手机系统通知。</div>' +
+    '<label class="checkline"><input type="checkbox" id="pu_on" ' + (D.push.on ? 'checked' : '') + '> 开启真推送</label>' +
+    '<div class="field"><label>家庭推送话题（请保密，别发到公开群）</label><input id="pu_topic" value="' + esc(topic) + '" readonly onclick="this.select()"></div>' +
+    '<div class="grid g1" style="gap:8px;margin-top:6px">' +
+    '<button class="btn primary block" onclick="copyPushTopic()">📋 复制话题名</button>' +
+    '<a class="btn block" style="text-align:center;text-decoration:none" href="' + subWeb + '" target="_blank" rel="noopener">🌐 用浏览器打开订阅页</a>' +
+    '<a class="btn block" style="text-align:center;text-decoration:none" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">🤖 安卓安装 ntfy</a>' +
+    '<a class="btn block" style="text-align:center;text-decoration:none" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">🍎 iPhone 安装 ntfy</a>' +
+    '<button class="btn block" onclick="requestBrowserNotif()">🔔 同时允许浏览器通知（页面开着时）</button>' +
+    '<button class="btn green block" onclick="sendPushTest()">🧪 发送 10 秒后测试提醒</button>' +
+    '</div>' +
+    '<div class="hint" style="margin-top:10px"><b>手机怎么收：</b><br>1）安装 ntfy<br>2）添加订阅，服务器填 <b>ntfy.sh</b>，话题填上面这串<br>3）回到手账本打开「开启真推送」<br>4）iOS 若想用「添加到主屏幕」的网页通知：需 iOS 16.4+，且本页推送走的是 ntfy App（更稳）。</div>' +
+    '<div class="hint">⏰ ntfy 单次最长预约 <b>3 天</b>；更远的提醒会在临近 3 天内自动补投，并建议同时「加到日历」。</div>' +
+    remindListHtml();
+  modal('🔔 手机提醒 / 真推送', html, function () {
+    ensurePush();
+    D.push.on = document.getElementById('pu_on').checked;
+    var t = document.getElementById('pu_topic').value.trim();
+    if (t) D.push.topic = t.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (D.push.on && !D.push.topic) D.push.topic = genTopic();
+    save();
+    closeModal();
+    if (D.push.on) {
+      armAllReminders();
+      toast('真推送已开启。请确认手机 ntfy 已订阅话题 🔔');
+    } else toast('已关闭真推送（本地提醒/日历仍可用）');
+  });
+}
+function remindListHtml() {
+  ensurePush();
+  var list = D.reminders.filter(function (r) { return r && !r.done && r.atMs >= Date.now() - 60000; })
+    .sort(function (a, b) { return a.atMs - b.atMs; })
+    .slice(0, 12);
+  if (!list.length) return '<div class="hint" style="margin-top:12px">暂无未到期提醒。新建任务/手账时可勾选「🔔 设置提醒」。</div>';
+  return '<div class="section-title" style="margin-top:14px">即将提醒<span class="cnt">' + list.length + '</span></div>' +
+    list.map(function (r) {
+      return '<div class="card" style="padding:10px;margin-top:6px"><div class="t">🔔 ' + esc(r.title) + '</div><div class="meta">' + esc(r.at) +
+        ' · <button class="iconbtn" onclick="downloadIcs(D.reminders.find(function(x){return x.id===\'' + r.id + '\'}))">📅</button>' +
+        ' <button class="iconbtn" onclick="cancelReminder(\'' + r.id + '\')">✕</button></div></div>';
+    }).join('');
+}
+function cancelReminder(id) {
+  ensurePush();
+  var r = D.reminders.find(function (x) { return x.id === id; });
+  if (!r) return;
+  r.done = true;
+  if (_remindTimers[id]) clearTimeout(_remindTimers[id]);
+  delete D.push.armed[id];
+  delete D.push.localArmed[id];
+  save();
+  toast('已取消提醒');
+  closeModal();
+  setTimeout(openPushSetup, 120);
+}
+function copyPushTopic() {
+  ensurePush();
+  var t = D.push.topic || '';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(function () { toast('话题已复制'); }).catch(function () { fallbackCopy(t, function () { toast('话题已复制'); }); });
+  } else fallbackCopy(t, function () { toast('话题已复制'); });
+}
+function requestBrowserNotif() {
+  if (!window.Notification) return toast('当前浏览器不支持通知');
+  Notification.requestPermission().then(function (p) {
+    if (p === 'granted') toast('浏览器通知已允许 ✅');
+    else toast('未允许通知（真推送仍可靠 ntfy App）');
+  });
+}
+function sendPushTest() {
+  ensurePush();
+  if (!D.push.topic) D.push.topic = genTopic();
+  D.push.on = true;
+  var rem = {
+    id: uid(),
+    title: '家庭手账本测试',
+    body: '如果你的手机 ntfy 已订阅话题，约 10 秒后会收到这条。',
+    atMs: Date.now() + 10000,
+    at: toLocalInputValue(Date.now() + 10000),
+    source: 'test',
+    sourceId: '',
+    done: false,
+    createdAt: nowStamp()
+  };
+  D.reminders.unshift(rem);
+  save();
+  delete D.push.armed[rem.id];
+  armLocalReminder(rem);
+  armNtfyReminder(rem);
+  toast('已安排 10 秒后测试（请确认 ntfy 已订阅）');
+}
+
 function openSettings() {
   modal('⚙️ 设置', '<div class="field"><label>家庭名称</label><input id="set_name" value="' + esc(D.homeName) + '"></div>' + '<div class="field"><label>过期提醒：默认提前几天（新建物品用这个）</label><select id="set_warn">' + [1, 2, 3, 5, 7, 10, 14, 30].map(function (n) {
     return '<option value="' + n + '" ' + ((D.expWarnDefault || 3) === n ? 'selected' : '') + '>提前 ' + n + ' 天</option>';
   }).join('') + '</select></div>' + '<div class="hint">🚨 当前已过期 <b>' + overdueList().length + '</b> 样，⏰ 临期 <b>' + soonList().length + '</b> 样，🔥 标急 <b>' + urgentCount() + '</b> 条，💰 记账 <b>' + vis(D.ledger).length + '</b> 笔（' + D.books.length + ' 本账）。</div>' + '<div class="field"><label>我是谁</label><select id="set_me">' + D.members.map(function (m) {
     return '<option value="' + m.id + '" ' + (D.me === m.id ? 'selected' : '') + '>' + m.emoji + ' ' + esc(m.name) + '</option>';
-  }).join('') + '</select></div>' + '<div class="hint">数据存在这台设备的浏览器里。<b>换手机 / 清缓存前，务必先「完整备份」。</b></div>' + '<div class="grid g1" style="margin-top:6px">' + (D.me ? '<button class="btn block" onclick="closeModal();setTimeout(pickMe,150)">🔐 更换这台设备的身份（当前：' + esc(me() ? me().name : '') + '）</button>' : '') + '<button class="btn block" onclick="closeModal();setTimeout(openTheme,160)">🎨 主题外观（当前：' + ((THEMES.filter(function(t){return t.k===(D.theme||'warm')})[0])||THEMES[0]).e + ((THEMES.filter(function(t){return t.k===(D.theme||'warm')})[0])||THEMES[0]).n + '）</button>' + '<button class="btn block" onclick="closeModal();setTimeout(changePin,160)">🔑 修改切换密码</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openCloudSetup,160)">☁️ 云同步（联网自动同步）' + (cloudOn() ? ' · 已开启' : '') + '</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openMembersPanel,150)">👨‍👩‍👧‍👦 家人管理（' + D.members.length + ' 人）</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openSync,150)">🔄 同步给家人（导出文件 / 同步码）</button>' + '<button class="btn block" onclick="exportFull()">💾 完整备份（含私密）</button>' + '<button class="btn block" onclick="openImport()">📥 从备份 / 同步包恢复</button>' + '<button class="btn block" onclick="closeModal();setTimeout(selfCheck,150)">🩺 体检并修复</button>' + '<button class="btn block danger" onclick="clearAll()">🧹 清空这台设备上的全部数据</button></div>' + '<div style="font-size:12px;color:var(--ink2);margin-top:10px" id="storeInfo2"></div>', function () {
+  }).join('') + '</select></div>' + '<div class="hint">数据存在这台设备的浏览器里。<b>换手机 / 清缓存前，务必先「完整备份」。</b></div>' + '<div class="grid g1" style="margin-top:6px">' + (D.me ? '<button class="btn block" onclick="closeModal();setTimeout(pickMe,150)">🔐 更换这台设备的身份（当前：' + esc(me() ? me().name : '') + '）</button>' : '') + '<button class="btn block" onclick="closeModal();setTimeout(openTheme,160)">🎨 主题外观（当前：' + ((THEMES.filter(function(t){return t.k===(D.theme||'warm')})[0])||THEMES[0]).e + ((THEMES.filter(function(t){return t.k===(D.theme||'warm')})[0])||THEMES[0]).n + '）</button>' + '<button class="btn block" onclick="closeModal();setTimeout(changePin,160)">🔑 修改切换密码</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openPushSetup,160)">🔔 手机提醒 / 真推送' + (D.push && D.push.on ? ' · 已开启' : '') + '</button>' +
+    '<button class="btn block" onclick="closeModal();setTimeout(openCloudSetup,160)">☁️ 云同步（联网自动同步）' + (cloudOn() ? ' · 已开启' : '') + '</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openMembersPanel,150)">👨‍👩‍👧‍👦 家人管理（' + D.members.length + ' 人）</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openSync,150)">🔄 同步给家人（导出文件 / 同步码）</button>' + '<button class="btn block" onclick="exportFull()">💾 完整备份（含私密）</button>' + '<button class="btn block" onclick="openImport()">📥 从备份 / 同步包恢复</button>' + '<button class="btn block" onclick="closeModal();setTimeout(selfCheck,150)">🩺 体检并修复</button>' + '<button class="btn block danger" onclick="clearAll()">🧹 清空这台设备上的全部数据</button></div>' + '<div style="font-size:12px;color:var(--ink2);margin-top:10px" id="storeInfo2"></div>', function () {
     D.homeName = document.getElementById('set_name').value.trim() || '我们家';
     D.me = document.getElementById('set_me').value;
     D.expWarnDefault = +document.getElementById('set_warn').value || 3;
@@ -4633,6 +5003,14 @@ function init() {
     renderAll();
     updateFab();
     if (!D.me) setTimeout(pickMe, 400);
+    try { registerPwa(); } catch (e) {}
+    try { ensurePush(); armAllReminders(); } catch (e) {}
+    try {
+      setInterval(function () { try { armAllReminders(); } catch (e) {} }, 30 * 60 * 1000);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) try { armAllReminders(); } catch (e) {}
+      });
+    } catch (e) {}
     save();
     bootDone();
   } catch (e) {
