@@ -4291,7 +4291,10 @@ function remindFieldsHtml(existing) {
   return '<label class="checkline"><input type="checkbox" id="r_on" ' + (on ? 'checked' : '') + ' onchange="var b=document.getElementById(\'r_box\');if(b)b.style.display=this.checked?\'\':\'none\'"> 🔔 设置提醒</label>' +
     '<div id="r_box" style="display:' + (on ? 'block' : 'none') + ';margin-top:8px">' +
     '<div class="field"><label>提醒时间</label><input id="r_at" type="datetime-local" value="' + at + '"></div>' +
-    '<div class="hint">关网页也要响：请先在「⚙️ 设置 → 🔔 手机提醒」里开启真推送，并在手机装 <b>ntfy</b> 订阅家庭话题。也可点下面加到系统日历（最稳）。</div>' +
+    '<div class="hint">' + (D.push && D.push.on && D.push.topic
+      ? '✅ 真推送已开：保存后会立刻向 ntfy <b>预约到点推送</b>，关网页 / 用别的 App 也能响（请确认手机 ntfy 已订阅）。'
+      : '⚠️ 当前未开真推送：只在本页开着时会本地提醒。关网页也要响 → 先去「⚙️→🔔」开启，并装 <b>ntfy</b> 订阅话题。') +
+    ' 也可点下面加到系统日历（最稳）。</div>' +
     '<button type="button" class="btn sm block" onclick="previewAddCalendar()">📅 加到手机日历（推荐兜底）</button>' +
     '</div>';
 }
@@ -4329,19 +4332,36 @@ function upsertReminderForSource(source, sourceId, rem) {
     rem.source = source;
     rem.sourceId = sourceId;
     D.reminders.unshift(rem);
-    queueReminder(rem);
+    /* 设提醒时立刻向 ntfy 预约到点推送；forceToast 让用户知道成没成功 */
+    queueReminder(rem, { force: true, forceToast: true });
+    if (!D.push.on || !D.push.topic) {
+      setTimeout(function () {
+        toast('⚠️ 关网页也要响：请打开 ⚙️→🔔 开启真推送，并确认手机 ntfy 已订阅');
+      }, 900);
+    }
   }
 }
-function queueReminder(r) {
+function ntfySeqId(r) {
+  return ('r' + String(r.id || '').replace(/[^a-zA-Z0-9_-]/g, '')).slice(0, 48) || ('r' + Date.now().toString(36));
+}
+function queueReminder(r, opts) {
   if (!r || r.done) return;
+  opts = opts || {};
   armLocalReminder(r);
-  armNtfyReminder(r);
+  armNtfyReminder(r, opts);
 }
 function armLocalReminder(r) {
   ensurePush();
   var delay = r.atMs - Date.now();
-  if (delay < 0) return;
   if (_remindTimers[r.id]) clearTimeout(_remindTimers[r.id]);
+  /* 已过点但在宽限内：立刻本地响一次 */
+  if (delay <= 0) {
+    if (delay > -60000 && !r._localFired) {
+      r._localFired = true;
+      fireLocalReminder(r);
+    }
+    return;
+  }
   if (delay > 2147483647) return;
   _remindTimers[r.id] = setTimeout(function () {
     fireLocalReminder(r);
@@ -4376,46 +4396,63 @@ function fireLocalReminder(r) {
   } catch (e) {}
   try { toast('🔔 ' + title); } catch (e2) {}
 }
-function armNtfyReminder(r) {
+function armNtfyReminder(r, opts) {
   ensurePush();
-  if (!D.push.on || !D.push.topic) return;
-  var delay = r.atMs - Date.now();
-  if (delay < 8000) delay = 8000;
-  if (delay > NTFY_MAX_MS) {
-    /* 超过 3 天：等临近再投递 */
+  opts = opts || {};
+  if (!D.push.topic) {
+    if (opts.forceToast) toast('还没有推送话题，请先打开「🔔 手机提醒」');
     return;
   }
-  if (D.push.armed[r.id] === r.atMs) return;
-  var delaySec = Math.ceil(delay / 1000);
+  if (!D.push.on) {
+    if (opts.forceToast) toast('未开启真推送：关网页不会响。请去设置打开 🔔');
+    return;
+  }
+  var left = r.atMs - Date.now();
+  if (left > NTFY_MAX_MS) {
+    if (opts.forceToast) toast('提醒超过 3 天，临近时会自动补投；建议同时加日历');
+    return;
+  }
+  if (!opts.force && D.push.armed[r.id] === r.atMs) return;
   var topic = D.push.topic;
-  var headers = {
-    'Title': (r.title || '家庭手账提醒').slice(0, 80),
-    'Tags': 'notebook,bell',
-    'Delay': delaySec + 's',
-    'Click': appBaseUrl()
-  };
-  fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
+  var seq = ntfySeqId(r);
+  /* 距到期不足 12 秒则约 12 秒后推（ntfy 最短约 10 秒） */
+  var atUnix = Math.floor((left <= 12000 ? Date.now() + 12000 : r.atMs) / 1000);
+  var title = (r.title || '家庭手账提醒').slice(0, 80);
+  var body = (r.body || r.title || '你有一条提醒').slice(0, 500);
+  /* 路径带 sequence_id：可覆盖/取消；参数走 query，中文不进自定义 Header，避免预约失败 */
+  var q = 'delay=' + encodeURIComponent(String(atUnix)) +
+    '&title=' + encodeURIComponent(title) +
+    '&tags=' + encodeURIComponent('notebook,bell') +
+    '&priority=4' +
+    '&click=' + encodeURIComponent(appBaseUrl());
+  fetch('https://ntfy.sh/' + encodeURIComponent(topic) + '/' + encodeURIComponent(seq) + '?' + q, {
     method: 'POST',
-    headers: headers,
-    body: (r.body || r.title || '你有一条提醒').slice(0, 500)
+    body: body
   }).then(function (res) {
     if (res.ok) {
       D.push.armed[r.id] = r.atMs;
+      D.push.lastArmOk = nowStamp();
+      D.push.lastArmErr = '';
       save();
+      if (opts.forceToast) toast('已预约手机推送（到点由 ntfy 推，可关网页）☁️🔔');
     } else {
-      toast('真推送投递失败（可改用日历）');
+      D.push.lastArmErr = 'HTTP ' + res.status;
+      save();
+      toast('真推送投递失败 ' + res.status + '（可改用日历）');
     }
   }).catch(function () {
+    D.push.lastArmErr = '网络失败';
+    save();
     toast('真推送网络失败（可改用日历）');
   });
 }
-function armAllReminders() {
+function armAllReminders(force) {
   ensurePush();
   var now = Date.now();
   D.reminders.forEach(function (r) {
     if (!r || r.done) return;
     if (r.atMs < now - 60000) return;
-    queueReminder(r);
+    queueReminder(r, { force: !!force });
   });
 }
 function previewAddCalendar() {
@@ -4529,6 +4566,11 @@ function cancelReminder(id) {
   if (_remindTimers[id]) clearTimeout(_remindTimers[id]);
   delete D.push.armed[id];
   delete D.push.localArmed[id];
+  try {
+    if (D.push.topic) {
+      fetch('https://ntfy.sh/' + encodeURIComponent(D.push.topic) + '/' + encodeURIComponent(ntfySeqId(r)), { method: 'DELETE' }).catch(function () {});
+    }
+  } catch (e) {}
   save();
   toast('已取消提醒');
   closeModal();
@@ -4555,9 +4597,9 @@ function sendPushTest() {
   var rem = {
     id: uid(),
     title: '家庭手账本测试',
-    body: '如果你的手机 ntfy 已订阅话题，约 10 秒后会收到这条。',
-    atMs: Date.now() + 10000,
-    at: toLocalInputValue(Date.now() + 10000),
+    body: '如果你的手机 ntfy 已订阅话题，约 12 秒后会收到这条（关 App 也应能收到）。',
+    atMs: Date.now() + 12000,
+    at: toLocalInputValue(Date.now() + 12000),
     source: 'test',
     sourceId: '',
     done: false,
@@ -4566,9 +4608,7 @@ function sendPushTest() {
   D.reminders.unshift(rem);
   save();
   delete D.push.armed[rem.id];
-  armLocalReminder(rem);
-  armNtfyReminder(rem);
-  toast('已安排 10 秒后测试（请确认 ntfy 已订阅）');
+  queueReminder(rem, { force: true, forceToast: true });
 }
 
 function openSettings() {
