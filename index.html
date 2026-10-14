@@ -4243,6 +4243,7 @@ function applyPack(p) {
   save();
   closeModal();
   renderAll();
+  try { armAllReminders(true); } catch (eArm) {}
   toast('合并完成：新增 ' + added + ' 条，更新 ' + updated + ' 条' + (removed ? '，删除 ' + removed + ' 条' : '') + (talked ? '，新回复 ' + talked + ' 条' : ''));
 }
 
@@ -4332,12 +4333,13 @@ function upsertReminderForSource(source, sourceId, rem) {
     rem.source = source;
     rem.sourceId = sourceId;
     D.reminders.unshift(rem);
-    /* 设提醒时立刻向 ntfy 预约到点推送；forceToast 让用户知道成没成功 */
+    if (D.push.on && !D.push.topic) D.push.topic = genTopic();
+    /* 设提醒时立刻向 ntfy 预约到点推送（keepalive，关页也不丢）；forceToast 告知成败 */
     queueReminder(rem, { force: true, forceToast: true });
     if (!D.push.on || !D.push.topic) {
       setTimeout(function () {
         toast('⚠️ 关网页也要响：请打开 ⚙️→🔔 开启真推送，并确认手机 ntfy 已订阅');
-      }, 900);
+      }, 1200);
     }
   }
 }
@@ -4408,6 +4410,8 @@ function armNtfyReminder(r, opts) {
     return;
   }
   var left = r.atMs - Date.now();
+  /* 已过点：只走本地宽限提醒，不再向 ntfy 补投（否则一打开页面就会再推一次） */
+  if (left <= 0) return;
   if (left > NTFY_MAX_MS) {
     if (opts.forceToast) toast('提醒超过 3 天，临近时会自动补投；建议同时加日历');
     return;
@@ -4415,36 +4419,56 @@ function armNtfyReminder(r, opts) {
   if (!opts.force && D.push.armed[r.id] === r.atMs) return;
   var topic = D.push.topic;
   var seq = ntfySeqId(r);
-  /* 距到期不足 12 秒则约 12 秒后推（ntfy 最短约 10 秒） */
-  var atUnix = Math.floor((left <= 12000 ? Date.now() + 12000 : r.atMs) / 1000);
+  /* ntfy 最短约 10 秒；用相对秒数，避免 Unix 时间戳歧义 */
+  var secs = Math.max(10, Math.ceil(left / 1000));
+  var delayStr = secs + 's';
   var title = (r.title || '家庭手账提醒').slice(0, 80);
   var body = (r.body || r.title || '你有一条提醒').slice(0, 500);
-  /* 路径带 sequence_id：可覆盖/取消；参数走 query，中文不进自定义 Header，避免预约失败 */
-  var q = 'delay=' + encodeURIComponent(String(atUnix)) +
+  var click = appBaseUrl();
+  /* 路径带 sequence_id 可覆盖/取消；title/click 走 query（支持中文），Delay 也走 query */
+  var q = 'delay=' + encodeURIComponent(delayStr) +
     '&title=' + encodeURIComponent(title) +
     '&tags=' + encodeURIComponent('notebook,bell') +
     '&priority=4' +
-    '&click=' + encodeURIComponent(appBaseUrl());
-  fetch('https://ntfy.sh/' + encodeURIComponent(topic) + '/' + encodeURIComponent(seq) + '?' + q, {
-    method: 'POST',
-    body: body
-  }).then(function (res) {
-    if (res.ok) {
-      D.push.armed[r.id] = r.atMs;
-      D.push.lastArmOk = nowStamp();
-      D.push.lastArmErr = '';
-      save();
-      if (opts.forceToast) toast('已预约手机推送（到点由 ntfy 推，可关网页）☁️🔔');
-    } else {
-      D.push.lastArmErr = 'HTTP ' + res.status;
-      save();
-      toast('真推送投递失败 ' + res.status + '（可改用日历）');
-    }
-  }).catch(function () {
-    D.push.lastArmErr = '网络失败';
+    '&click=' + encodeURIComponent(click);
+  var url = 'https://ntfy.sh/' + encodeURIComponent(topic) + '/' + encodeURIComponent(seq) + '?' + q;
+  function markOk() {
+    D.push.armed[r.id] = r.atMs;
+    D.push.lastArmOk = nowStamp();
+    D.push.lastArmErr = '';
+    D.push.lastArmDelay = delayStr;
     save();
-    toast('真推送网络失败（可改用日历）');
-  });
+    if (opts.forceToast) toast('已预约手机推送 ' + delayStr + ' 后（可关网页，到点 ntfy 推）☁️🔔');
+  }
+  function markErr(msg) {
+    D.push.lastArmErr = msg;
+    save();
+    if (opts.forceToast || opts.force) toast('真推送预约失败：' + msg + '（可改用日历）');
+  }
+  function doPost(attempt) {
+    /* keepalive：保存后立刻关页/切 App 也不会掐掉预约请求 —— 这是「必须开着页才响」的主因之一 */
+    fetch(url, {
+      method: 'POST',
+      body: body,
+      keepalive: true,
+      mode: 'cors',
+      cache: 'no-store'
+    }).then(function (res) {
+      if (res.ok) {
+        markOk();
+        return;
+      }
+      return res.text().then(function (t) {
+        var detail = 'HTTP ' + res.status + (t ? (' ' + String(t).slice(0, 80)) : '');
+        if (attempt < 1) setTimeout(function () { doPost(attempt + 1); }, 700);
+        else markErr(detail);
+      });
+    }).catch(function (e) {
+      if (attempt < 1) setTimeout(function () { doPost(attempt + 1); }, 700);
+      else markErr((e && e.message) ? e.message : '网络失败');
+    });
+  }
+  doPost(0);
 }
 function armAllReminders(force) {
   ensurePush();
@@ -4530,6 +4554,8 @@ function openPushSetup() {
     '</div>' +
     '<div class="hint" style="margin-top:10px"><b>手机怎么收：</b><br>1）安装 ntfy<br>2）添加订阅，服务器填 <b>ntfy.sh</b>，话题填上面这串<br>3）回到手账本打开「开启真推送」，再点绿色「🧪 发送测试提醒」<br>4）iOS 若想用「添加到主屏幕」的网页通知：需 iOS 16.4+，且本页推送走的是 ntfy App（更稳）。</div>' +
     '<div class="hint">⏰ ntfy 单次最长预约 <b>3 天</b>；更远的提醒会在临近 3 天内自动补投，并建议同时「加到日历」。</div>' +
+    (D.push.lastArmOk ? '<div class="hint ok">最近预约成功：' + esc(D.push.lastArmOk) + (D.push.lastArmDelay ? ('（' + esc(D.push.lastArmDelay) + '）') : '') + '</div>' : '') +
+    (D.push.lastArmErr ? '<div class="hint" style="color:#b23c26">最近预约失败：' + esc(D.push.lastArmErr) + '</div>' : '') +
     remindListHtml();
   modal('🔔 手机提醒 / 真推送', html, function () {
     ensurePush();

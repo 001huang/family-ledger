@@ -1,5 +1,5 @@
 /* 家庭手账本 Service Worker：离线缓存 + 通知点击 */
-var CACHE = 'family-ledger-v4';
+var CACHE = 'family-ledger-v5';
 var ASSETS = [
   './',
   './index.html',
@@ -32,13 +32,31 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   var req = e.request;
   if (req.method !== 'GET') return;
+  var url;
+  try { url = new URL(req.url); } catch (err) { return; }
+  if (url.origin !== self.location.origin) return;
+  var isHtml = req.mode === 'navigate' || (req.headers.get('accept') || '').indexOf('text/html') >= 0 || /index\.html$/i.test(url.pathname) || url.pathname.endsWith('/');
+  /* HTML 网络优先，避免提醒/推送逻辑被旧缓存卡住 */
+  if (isHtml) {
+    e.respondWith(
+      fetch(req).then(function (res) {
+        if (res && res.ok) {
+          var copy = res.clone();
+          caches.open(CACHE).then(function (c) { c.put(req, copy); });
+        }
+        return res;
+      }).catch(function () {
+        return caches.match(req).then(function (hit) { return hit || caches.match('./index.html'); });
+      })
+    );
+    return;
+  }
   e.respondWith(
     caches.match(req).then(function (hit) {
       if (hit) return hit;
       return fetch(req).then(function (res) {
         try {
-          var url = new URL(req.url);
-          if (url.origin === self.location.origin && res.ok) {
+          if (res.ok) {
             var copy = res.clone();
             caches.open(CACHE).then(function (c) { c.put(req, copy); });
           }
