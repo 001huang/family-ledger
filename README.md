@@ -7,7 +7,7 @@
 本版采用 **ntfy.sh**（免费公共推送，无需再注册 OneSignal / Firebase）：
 
 1. 手机安装 [ntfy（安卓）](https://play.google.com/store/apps/details?id=io.heckel.ntfy) 或 [ntfy（iOS）](https://apps.apple.com/app/ntfy/id1625396347)
-2. 打开手账本 → **设置 → 🔔 手机提醒 / 真推送** → 开启，复制「家庭推送话题」
+2. 打开手账本 → **设置** → 点绿色 **🧪 发送测试提醒（约12秒）**，或进 **🔔 手机提醒 / 真推送** → 开启并复制「家庭推送话题」
 3. 在 ntfy App 里订阅该话题（服务器 `ntfy.sh`）
 4. 新建任务 / 手账时勾选「🔔 设置提醒」并选时间
 5. 可点「📅 加到手机日历」作系统级兜底

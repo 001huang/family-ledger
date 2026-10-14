@@ -4526,9 +4526,9 @@ function openPushSetup() {
     '<a class="btn block" style="text-align:center;text-decoration:none" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">🤖 安卓安装 ntfy</a>' +
     '<a class="btn block" style="text-align:center;text-decoration:none" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">🍎 iPhone 安装 ntfy</a>' +
     '<button class="btn block" onclick="requestBrowserNotif()">🔔 同时允许浏览器通知（页面开着时）</button>' +
-    '<button class="btn green block" onclick="sendPushTest()">🧪 发送 10 秒后测试提醒</button>' +
+    '<button class="btn green block" onclick="sendPushTest()">🧪 发送测试提醒（约12秒，关页也能响）</button>' +
     '</div>' +
-    '<div class="hint" style="margin-top:10px"><b>手机怎么收：</b><br>1）安装 ntfy<br>2）添加订阅，服务器填 <b>ntfy.sh</b>，话题填上面这串<br>3）回到手账本打开「开启真推送」<br>4）iOS 若想用「添加到主屏幕」的网页通知：需 iOS 16.4+，且本页推送走的是 ntfy App（更稳）。</div>' +
+    '<div class="hint" style="margin-top:10px"><b>手机怎么收：</b><br>1）安装 ntfy<br>2）添加订阅，服务器填 <b>ntfy.sh</b>，话题填上面这串<br>3）回到手账本打开「开启真推送」，再点绿色「🧪 发送测试提醒」<br>4）iOS 若想用「添加到主屏幕」的网页通知：需 iOS 16.4+，且本页推送走的是 ntfy App（更稳）。</div>' +
     '<div class="hint">⏰ ntfy 单次最长预约 <b>3 天</b>；更远的提醒会在临近 3 天内自动补投，并建议同时「加到日历」。</div>' +
     remindListHtml();
   modal('🔔 手机提醒 / 真推送', html, function () {
@@ -4617,6 +4617,8 @@ function openSettings() {
   }).join('') + '</select></div>' + '<div class="hint">🚨 当前已过期 <b>' + overdueList().length + '</b> 样，⏰ 临期 <b>' + soonList().length + '</b> 样，🔥 标急 <b>' + urgentCount() + '</b> 条，💰 记账 <b>' + vis(D.ledger).length + '</b> 笔（' + D.books.length + ' 本账）。</div>' + '<div class="field"><label>我是谁</label><select id="set_me">' + D.members.map(function (m) {
     return '<option value="' + m.id + '" ' + (D.me === m.id ? 'selected' : '') + '>' + m.emoji + ' ' + esc(m.name) + '</option>';
   }).join('') + '</select></div>' + '<div class="hint">数据存在这台设备的浏览器里。<b>换手机 / 清缓存前，务必先「完整备份」。</b></div>' + '<div class="grid g1" style="margin-top:6px">' + (D.me ? '<button class="btn block" onclick="closeModal();setTimeout(pickMe,150)">🔐 更换这台设备的身份（当前：' + esc(me() ? me().name : '') + '）</button>' : '') + '<button class="btn block" onclick="closeModal();setTimeout(openTheme,160)">🎨 主题外观（当前：' + ((THEMES.filter(function(t){return t.k===(D.theme||'warm')})[0])||THEMES[0]).e + ((THEMES.filter(function(t){return t.k===(D.theme||'warm')})[0])||THEMES[0]).n + '）</button>' + '<button class="btn block" onclick="closeModal();setTimeout(changePin,160)">🔑 修改切换密码</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openPushSetup,160)">🔔 手机提醒 / 真推送' + (D.push && D.push.on ? ' · 已开启' : '') + '</button>' +
+    '<button class="btn green block" onclick="sendPushTest()">🧪 发送测试提醒（约12秒）</button>' +
+    '<div class="hint">点绿色按钮即可测推送（会自动开启真推送）。完整设置见上面「🔔 手机提醒 / 真推送」。</div>' +
     '<button class="btn block" onclick="closeModal();setTimeout(openCloudSetup,160)">☁️ 云同步（联网自动同步）' + (cloudOn() ? ' · 已开启' : '') + '</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openMembersPanel,150)">👨‍👩‍👧‍👦 家人管理（' + D.members.length + ' 人）</button>' + '<button class="btn block" onclick="closeModal();setTimeout(openSync,150)">🔄 同步给家人（导出文件 / 同步码）</button>' + '<button class="btn block" onclick="exportFull()">💾 完整备份（含私密）</button>' + '<button class="btn block" onclick="openImport()">📥 从备份 / 同步包恢复</button>' + '<button class="btn block" onclick="closeModal();setTimeout(selfCheck,150)">🩺 体检并修复</button>' + '<button class="btn block danger" onclick="clearAll()">🧹 清空这台设备上的全部数据</button></div>' + '<div style="font-size:12px;color:var(--ink2);margin-top:10px" id="storeInfo2"></div>', function () {
     D.homeName = document.getElementById('set_name').value.trim() || '我们家';
     D.me = document.getElementById('set_me').value;
