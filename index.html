@@ -533,6 +533,13 @@ textarea{resize:vertical;min-height:76px;line-height:1.6}
   <b>⚠️ 你正在用微信 / QQ 内置浏览器打开</b><br>
   这种浏览器打开本地笔记文件经常白屏。请点右上角「⋯」→ 选择「<b>用浏览器打开</b>」（Safari / Chrome / 手机自带浏览器）。
 </div>
+<div id="syncTip" style="display:none;position:relative;z-index:40;margin:0;padding:12px 14px;background:#fff6e5;border-bottom:2px solid #f0d9a8;color:#7a5a1e;font-size:13.5px;line-height:1.7">
+  <b>⚠️ 你正在用家里局域网地址打开</b>（或本地文件）<br>
+  手机若用的是公网 <b>https://001huang.github.io/family-ledger/</b>，两边数据互不相通。<br>
+  <b>请电脑也打开上面这个公网链接</b>，再点顶部 ☁️ → 填和手机<b>同一串</b>云端地址并开启同步。
+  <div style="margin-top:8px"><button type="button" class="btn sm" onclick="location.href='https://001huang.github.io/family-ledger/'">打开公网版</button>
+  <button type="button" class="btn sm" onclick="document.getElementById('syncTip').style.display='none'">先关掉提示</button></div>
+</div>
 <div class="main">
   <div class="page show" id="page-today">
     <div class="page-head"><div><h1>🏠 今日</h1><div class="sub">家里今天要买什么、谁要做什么，一眼看完</div></div><div class="spacer"></div><div class="dayline" id="todayLine"></div></div>
@@ -881,6 +888,7 @@ textarea{resize:vertical;min-height:76px;line-height:1.6}
 
 <script>
 try{var _ua=navigator.userAgent||"";if(/MicroMessenger|QQ\/|Weibo|QQBrowser/i.test(_ua)){var _e=document.getElementById("uaTip");if(_e)_e.style.display="block"}}catch(e){}
+try{var _h=(location.hostname||"").toLowerCase();var _lan=!_h||_h==="localhost"||_h==="127.0.0.1"||/^192\.168\.\d+\.\d+$/.test(_h)||/^10\.\d+\.\d+\.\d+$/.test(_h)||/^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/.test(_h)||location.protocol==="file:";if(_lan){var _st=document.getElementById("syncTip");if(_st)_st.style.display="block"}}catch(e){}
 if(typeof window.Promise==="undefined"){window.Promise=function(fn){var self=this,st=0,v=null,cbs=[];function fire(){if(!st)return;var l=cbs.slice();cbs.length=0;l.forEach(function(c){try{if(st===1){if(c[0])c[0](v)}else{if(c[1])c[1](v)}}catch(e){}})}this.then=function(a,b){cbs.push([a,b]);fire();return self};this["catch"]=function(b){cbs.push([null,b]);fire();return self};function res(x){if(st)return;st=1;v=x;fire()}function rej(x){if(st)return;st=2;v=x;fire()}try{fn(res,rej)}catch(e){rej(e)}};window.Promise.resolve=function(v){return new window.Promise(function(r){r(v)})};window.Promise.reject=function(v){return new window.Promise(function(r,j){j(v)})}}
 </script>
 <script>
