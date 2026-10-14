@@ -1,5 +1,5 @@
 /* 家庭手账本 Service Worker：离线缓存 + 通知点击 */
-var CACHE = 'family-ledger-v5';
+var CACHE = 'family-ledger-v6';
 var ASSETS = [
   './',
   './index.html',

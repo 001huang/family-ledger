@@ -147,10 +147,11 @@ input,select,textarea{font-size:14px;padding:7px 9px;border-radius:10px;min-heig
 .card .acts{position:absolute;right:7px;top:7px;display:flex;gap:4px}
 .jwrap .acts{position:absolute;right:6px;top:6px;display:flex;gap:4px;z-index:3}
 .cloud-mark{border:1.5px solid var(--line);background:var(--card);color:var(--ink2);border-radius:10px;font-size:13px;line-height:1;cursor:pointer;font-family:inherit;height:32px;min-width:34px;padding:0 6px;display:flex;align-items:center;justify-content:center;flex:none}
-.cloud-mark.off{background:var(--card);border-color:var(--line);color:var(--ink2)}
-.cloud-mark.ok{background:var(--oksoft);border-color:var(--line);color:var(--ok)}
-.cloud-mark.bad{background:var(--warnsoft);border-color:var(--line);color:var(--danger)}
-.cloud-mark.sync{background:var(--yellowsoft);border-color:var(--line);color:var(--warn)}
+/* 云同步图标：关=红，开=蓝，同步中=黄，出错=橙（浅底深字，深色/浅色主题都看得清） */
+.cloud-mark.off{background:#FDECEA;border-color:#F2B8AF;color:#C0392B}
+.cloud-mark.ok{background:#E7F1FD;border-color:#A6C9F2;color:#1F6FD0}
+.cloud-mark.bad{background:#FDEEE1;border-color:#EFBD91;color:#C2681A}
+.cloud-mark.sync{background:#FCF5E2;border-color:#E9D9A8;color:#B8892B}
 .set-btn{border:1.5px solid var(--line);background:var(--card);color:var(--ink2);border-radius:10px;font-size:14px;line-height:1;cursor:pointer;font-family:inherit;width:32px;height:32px;min-height:32px;padding:0;display:flex;align-items:center;justify-content:center;flex:none}
 .set-btn:active{background:var(--warn);color:var(--ink)}
 .iconbtn{border:none;background:var(--card);border:1.5px solid var(--line);border-radius:10px;width:32px;height:32px;cursor:pointer;font-size:14px;line-height:1;color:var(--ink2);display:flex;align-items:center;justify-content:center}
